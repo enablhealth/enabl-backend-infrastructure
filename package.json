@@ -1,0 +1,50 @@
+{
+  "name": "enabl-backend-infrastructure",
+  "version": "1.0.0",
+  "description": "AWS CDK Infrastructure for Enabl Health - AI-powered everyday health assistant",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk",
+    "deploy": "cdk deploy",
+    "deploy:dev": "cdk deploy --context environment=development",
+    "deploy:staging": "cdk deploy --context environment=staging",
+    "deploy:prod": "cdk deploy --context environment=production",
+    "destroy": "cdk destroy",
+    "diff": "cdk diff",
+    "synth": "cdk synth",
+    "bootstrap": "cdk bootstrap",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "lint": "eslint lib/**/*.ts",
+    "lint:fix": "eslint lib/**/*.ts --fix"
+  },
+  "keywords": [
+    "aws",
+    "cdk",
+    "infrastructure",
+    "health",
+    "ai",
+    "enabl"
+  ],
+  "author": "Enabl Health",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.5",
+    "@types/node": "^20.6.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.0",
+    "@typescript-eslint/parser": "^6.7.0",
+    "aws-cdk": "^2.95.0",
+    "eslint": "^8.49.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.0.3",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.1",
+    "typescript": "~5.2.2"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.95.0",
+    "constructs": "^10.3.0"
+  }
+}
