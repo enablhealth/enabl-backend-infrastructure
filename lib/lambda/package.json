@@ -1,0 +1,11 @@
+{
+  "name": "enabl-ai-agents",
+  "version": "1.0.0",
+  "description": "Lambda functions for Enabl Health AI agents",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.400.0",
+    "@aws-sdk/client-lambda": "^3.400.0",
+    "@aws-sdk/client-s3": "^3.400.0"
+  }
+}

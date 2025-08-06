@@ -8,6 +8,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { EnablConfig, validateConfig } from './config';
+import { BedrockAgentsStack } from './constructs/bedrock-agents-stack';
 
 /**
  * Properties for the Enabl Backend Stack
@@ -55,6 +56,9 @@ export class EnablBackendStack extends cdk.Stack {
     
     // Create API Gateway
     this.createApiGateway(config);
+    
+    // Create Bedrock AI Agents
+    this.createBedrockAgents(config);
     
     // Create outputs for frontend integration
     this.createOutputs();
@@ -482,7 +486,21 @@ export class EnablBackendStack extends cdk.Stack {
     });
   }
 
-    /**
+  /**
+   * Create Bedrock AI Agents infrastructure
+   */
+  private createBedrockAgents(config: EnablConfig): void {
+    const bedrockAgents = new BedrockAgentsStack(this, 'BedrockAgents', {
+      environment: config.environment,
+      userPoolId: this.userPool.userPoolId,
+      userPoolClientId: this.userPoolClient.userPoolClientId,
+    });
+
+    // Add dependency to ensure proper order
+    bedrockAgents.addDependency(this);
+  }
+
+  /**
    * Create CDK outputs for the stack
    */
   private createOutputs(): void {
