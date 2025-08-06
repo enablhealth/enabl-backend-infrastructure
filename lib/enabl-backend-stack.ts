@@ -342,6 +342,42 @@ export class EnablBackendStack extends cdk.Stack {
         ? cdk.RemovalPolicy.RETAIN 
         : cdk.RemovalPolicy.DESTROY,
     });
+
+    // Reminders table for appointment agent
+    this.dynamoTables.reminders = new dynamodb.Table(this, 'RemindersTable', {
+      tableName: `enabl-reminders-${config.environment}`,
+      partitionKey: {
+        name: 'PK', // USER#userId
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'SK', // REMINDER#reminderId
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecovery: config.dynamodb.pointInTimeRecovery,
+      removalPolicy: config.environment === 'production' 
+        ? cdk.RemovalPolicy.RETAIN 
+        : cdk.RemovalPolicy.DESTROY,
+    });
+
+    // User preferences table for appointment agent
+    this.dynamoTables.userPreferences = new dynamodb.Table(this, 'UserPreferencesTable', {
+      tableName: `enabl-user-preferences-${config.environment}`,
+      partitionKey: {
+        name: 'PK', // USER#userId  
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'SK', // PREFERENCE#type
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecovery: config.dynamodb.pointInTimeRecovery,
+      removalPolicy: config.environment === 'production' 
+        ? cdk.RemovalPolicy.RETAIN 
+        : cdk.RemovalPolicy.DESTROY,
+    });
   }
 
   /**

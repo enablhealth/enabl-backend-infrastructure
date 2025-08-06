@@ -143,6 +143,23 @@ export class BedrockAgentsStack extends cdk.Stack {
       },
     });
 
+    // Appointment Agent Lambda - handles medication reminders and scheduling
+    const appointmentAgentFunction = new lambda.Function(this, 'AppointmentAgentFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/appointment-agent'),
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 512,
+      environment: {
+        MODEL_ID: 'anthropic.claude-3-haiku-20240307-v1:0',
+        KNOWLEDGE_BASE_ID: 'placeholder-kb-id',
+        REGION: this.region,
+        ENVIRONMENT: props.environment,
+        REMINDERS_TABLE: `enabl-reminders-${props.environment}`,
+        USER_PREFERENCES_TABLE: `enabl-user-preferences-${props.environment}`,
+      },
+    });
+
     // Chat Router Lambda - routes requests to appropriate agents
     const chatRouterFunction = new lambda.Function(this, 'ChatRouterFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
@@ -154,6 +171,7 @@ export class BedrockAgentsStack extends cdk.Stack {
         HEALTH_ASSISTANT_FUNCTION: healthAssistantFunction.functionName,
         COMMUNITY_AGENT_FUNCTION: communityAgentFunction.functionName,
         DOCUMENT_AGENT_FUNCTION: documentAgentFunction.functionName,
+        APPOINTMENT_AGENT_FUNCTION: appointmentAgentFunction.functionName,
         REGION: this.region,
       },
     });
@@ -173,14 +191,34 @@ export class BedrockAgentsStack extends cdk.Stack {
     healthAssistantFunction.addToRolePolicy(bedrockPolicy);
     communityAgentFunction.addToRolePolicy(bedrockPolicy);
     documentAgentFunction.addToRolePolicy(bedrockPolicy);
+    appointmentAgentFunction.addToRolePolicy(bedrockPolicy);
 
     // Grant Lambda invoke permissions to chat router
     healthAssistantFunction.grantInvoke(chatRouterFunction);
     communityAgentFunction.grantInvoke(chatRouterFunction);
     documentAgentFunction.grantInvoke(chatRouterFunction);
+    appointmentAgentFunction.grantInvoke(chatRouterFunction);
 
     // Grant S3 permissions to document agent
     this.knowledgeBaseBucket.grantReadWrite(documentAgentFunction);
+
+    // Grant additional permissions for appointment agent
+    const appointmentAgentPolicy = new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:Query',
+        'dynamodb:Scan',
+        'sns:Publish',
+        'ses:SendEmail',
+        'ses:SendRawEmail',
+        'events:PutEvents',
+      ],
+      resources: ['*'],
+    });
+    appointmentAgentFunction.addToRolePolicy(appointmentAgentPolicy);
 
     // API Gateway for chat endpoints
     this.api = new apigateway.RestApi(this, 'EnablAiApi', {
@@ -232,6 +270,13 @@ export class BedrockAgentsStack extends cdk.Stack {
     // Document Agent
     const documentsResource = agentsResource.addResource('documents');
     documentsResource.addMethod('POST', new apigateway.LambdaIntegration(documentAgentFunction), {
+      authorizer: cognitoAuthorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Appointment Agent
+    const appointmentsResource = agentsResource.addResource('appointments');
+    appointmentsResource.addMethod('POST', new apigateway.LambdaIntegration(appointmentAgentFunction), {
       authorizer: cognitoAuthorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
