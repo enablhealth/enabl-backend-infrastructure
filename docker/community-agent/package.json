@@ -1,0 +1,19 @@
+{
+  "name": "enabl-community-agent",
+  "version": "1.0.0",
+  "description": "Enabl Community Agent for Amazon Bedrock AgentCore",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.400.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.400.0",
+    "@aws-sdk/client-dynamodb": "^3.400.0",
+    "@aws-sdk/client-sns": "^3.400.0",
+    "@aws-sdk/client-ses": "^3.400.0",
+    "@aws-sdk/util-dynamodb": "^3.400.0",
+    "google-auth-library": "^9.11.0",
+    "googleapis": "^128.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "enabl-agent-router",
+  "version": "1.0.0",
+  "description": "Enabl Health AI Agent Router Lambda Function",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "deploy": "npm run build && zip -r agent-router.zip .",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.600.0",
+    "@aws-sdk/client-bedrock-agentcore": "^3.862.0",
+    "@types/aws-lambda": "^8.10.119"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.3",
+    "@types/node": "^20.5.0",
+    "jest": "^29.6.2",
+    "typescript": "^5.1.6"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "bedrock",
+    "ai",
+    "health",
+    "agent",
+    "router"
+  ],
+  "author": "Enabl Health Team",
+  "license": "MIT"
+}

@@ -87,13 +87,6 @@ export class BedrockAgentsStack extends cdk.Stack {
       },
     });
 
-    // Lambda Layer for AWS SDK and dependencies
-    const awsSdkLayer = new lambda.LayerVersion(this, 'AwsSdkLayer', {
-      code: lambda.Code.fromAsset('lambda-layers/aws-sdk'),
-      compatibleRuntimes: [lambda.Runtime.NODEJS_18_X],
-      description: 'AWS SDK for Bedrock and utilities',
-    });
-
     // Lambda function for Health Assistant Agent
     const healthAssistantFunction = new lambda.Function(this, 'HealthAssistantFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
@@ -101,7 +94,6 @@ export class BedrockAgentsStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lib/lambda/health-assistant'),
       timeout: cdk.Duration.minutes(5),
       memorySize: 1024,
-      layers: [awsSdkLayer],
       environment: {
         KNOWLEDGE_BASE_ID: 'kb-health-guidelines', // Will be created manually or via CDK
         MODEL_ID: 'anthropic.claude-3-sonnet-20240229-v1:0',
@@ -117,7 +109,6 @@ export class BedrockAgentsStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lib/lambda/community-agent'),
       timeout: cdk.Duration.minutes(3),
       memorySize: 512,
-      layers: [awsSdkLayer],
       environment: {
         KNOWLEDGE_BASE_ID: 'kb-community-content',
         MODEL_ID: 'amazon.titan-text-express-v1',
@@ -133,7 +124,6 @@ export class BedrockAgentsStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lib/lambda/document-agent'),
       timeout: cdk.Duration.minutes(5),
       memorySize: 1024,
-      layers: [awsSdkLayer],
       environment: {
         KNOWLEDGE_BASE_ID: 'kb-user-documents',
         MODEL_ID: 'cohere.command-text-v14',
@@ -255,6 +245,7 @@ export class BedrockAgentsStack extends cdk.Stack {
     
     // Health Assistant
     const healthResource = agentsResource.addResource('health');
+    
     healthResource.addMethod('POST', new apigateway.LambdaIntegration(healthAssistantFunction), {
       authorizer: cognitoAuthorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
@@ -262,6 +253,7 @@ export class BedrockAgentsStack extends cdk.Stack {
 
     // Community Agent
     const communityResource = agentsResource.addResource('community');
+    
     communityResource.addMethod('POST', new apigateway.LambdaIntegration(communityAgentFunction), {
       authorizer: cognitoAuthorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
@@ -269,6 +261,7 @@ export class BedrockAgentsStack extends cdk.Stack {
 
     // Document Agent
     const documentsResource = agentsResource.addResource('documents');
+    
     documentsResource.addMethod('POST', new apigateway.LambdaIntegration(documentAgentFunction), {
       authorizer: cognitoAuthorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
@@ -276,6 +269,7 @@ export class BedrockAgentsStack extends cdk.Stack {
 
     // Appointment Agent
     const appointmentsResource = agentsResource.addResource('appointments');
+    
     appointmentsResource.addMethod('POST', new apigateway.LambdaIntegration(appointmentAgentFunction), {
       authorizer: cognitoAuthorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,

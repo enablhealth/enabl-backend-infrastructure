@@ -522,18 +522,146 @@ export class EnablBackendStack extends cdk.Stack {
     });
   }
 
-  /**
+    /**
    * Create Bedrock AI Agents infrastructure
    */
   private createBedrockAgents(config: EnablConfig): void {
-    const bedrockAgents = new BedrockAgentsStack(this, 'BedrockAgents', {
-      environment: config.environment,
-      userPoolId: this.userPool.userPoolId,
-      userPoolClientId: this.userPoolClient.userPoolClientId,
+    // Create the agents directly in this stack instead of a separate stack
+    // to avoid cross-stack reference issues
+
+    // S3 Bucket for Knowledge Base documents
+    const knowledgeBaseBucket = new s3.Bucket(this, 'KnowledgeBaseBucket', {
+      bucketName: `enabl-knowledge-base-${config.environment}`,
+      versioned: true,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: config.environment === 'production' ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+      lifecycleRules: [
+        {
+          id: 'DeleteOldVersions',
+          enabled: true,
+          noncurrentVersionExpiration: cdk.Duration.days(30),
+        },
+      ],
     });
 
-    // Add dependency to ensure proper order
-    bedrockAgents.addDependency(this);
+    // For now, create a simple API Gateway without the complex Bedrock setup
+    // This will resolve the CORS issues immediately
+    const aiApi = new apigateway.RestApi(this, 'EnablAiApi', {
+      restApiName: `enabl-ai-api-${config.environment}`,
+      description: 'Enabl Health AI Agents API',
+      defaultCorsPreflightOptions: {
+        allowOrigins: config.environment === 'production' 
+          ? ['https://enabl.health']
+          : ['http://localhost:3000', 'https://dev.enabl.health', 'https://staging.enabl.health'],
+        allowMethods: ['GET', 'POST', 'OPTIONS'],
+        allowHeaders: ['Content-Type', 'Authorization', 'X-Amz-Date', 'X-Api-Key', 'X-Amz-Security-Token'],
+      },
+    });
+
+    // Chat Router Lambda Function
+    const chatRouterFunction = new lambda.Function(this, 'ChatRouterFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/chat-router'),
+      timeout: cdk.Duration.seconds(config.lambda.timeout),
+      memorySize: config.lambda.memorySize,
+      environment: {
+        ...config.lambda.environment,
+        REGION: config.region,
+        HEALTH_ASSISTANT_FUNCTION: 'enabl-health-assistant-dev', // Will be updated when agent functions are created
+        COMMUNITY_AGENT_FUNCTION: 'enabl-community-agent-dev',
+        DOCUMENT_AGENT_FUNCTION: 'enabl-document-agent-dev',
+        APPOINTMENT_AGENT_FUNCTION: 'enabl-appointment-agent-dev',
+      },
+    });
+
+    // Grant the chat router permission to invoke other Lambda functions
+    chatRouterFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['lambda:InvokeFunction'],
+      resources: ['*'], // Will be restricted to specific function ARNs in production
+    }));
+
+    // Health Assistant Lambda Function
+    const healthAssistantFunction = new lambda.Function(this, 'HealthAssistantFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/health-assistant'),
+      timeout: cdk.Duration.seconds(config.lambda.timeout),
+      memorySize: config.lambda.memorySize,
+      functionName: 'enabl-health-assistant-dev',
+      environment: {
+        ...config.lambda.environment,
+        REGION: config.region,
+      },
+    });
+
+    // Grant health assistant access to Bedrock
+    healthAssistantFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:RetrieveAndGenerate',
+      ],
+      resources: ['*'],
+    }));
+
+    // Appointment Agent Lambda Function
+    const appointmentAgentFunction = new lambda.Function(this, 'AppointmentAgentFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/appointment-agent'),
+      timeout: cdk.Duration.seconds(config.lambda.timeout),
+      memorySize: config.lambda.memorySize,
+      functionName: 'enabl-appointment-agent-dev',
+      environment: {
+        ...config.lambda.environment,
+        REGION: config.region,
+      },
+    });
+
+    // Grant appointment agent access to Bedrock and DynamoDB
+    appointmentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:RetrieveAndGenerate',
+      ],
+      resources: ['*'],
+    }));
+
+    appointmentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:GetItem',
+        'dynamodb:PutItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:Query',
+        'dynamodb:Scan',
+      ],
+      resources: [this.dynamoTables.appointments.tableArn],
+    }));
+
+    // Chat endpoint with real Lambda integration
+    const chatResource = aiApi.root.addResource('chat');
+    
+    // Cognito Authorizer (optional for guest users) - disabled for now to allow guest access
+    // const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'AiCognitoAuthorizer', {
+    //   cognitoUserPools: [this.userPool],
+    //   authorizerName: 'EnablAiCognitoAuthorizer',
+    // });
+    
+    chatResource.addMethod('POST', new apigateway.LambdaIntegration(chatRouterFunction, {
+      proxy: true,
+    }));
+
+    // Output the API URL
+    new cdk.CfnOutput(this, 'AiApiUrl', {
+      value: aiApi.url,
+      description: 'AI API Gateway URL',
+      exportName: `enabl-ai-api-url-${config.environment}`,
+    });
   }
 
   /**
