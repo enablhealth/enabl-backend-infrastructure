@@ -1,53 +1,87 @@
 # Enabl Health Backend Infrastructure
 
-AWS CDK infrastructure for Enabl Health - Your AI-powered everyday health assistant with advanced AgentCore capabilities.
+AWS CDK infrastructure for Enabl Health - Your AI-powered everyday health assistant with HIPAA-compliant, multi-agent AI systems.
 
 ## 🏗️ Architecture Overview
 
-This CDK project creates and manages all backend AWS resources for Enabl Health with a focus on AI-powered health assistance through specialized agents:
+This CDK project creates and manages all backend AWS resources for Enabl Health with a **three-tier deployment strategy** supporting Development, Staging, and Production environments.
+
+### Current Deployment Status
+
+**✅ Development Environment**
+- Backend: `enabl-backend-development` (operational)
+- API Gateway: `https://9zbq4e5m86.execute-api.us-east-1.amazonaws.com/dev/`
+- Frontend: Ready for App Runner deployment → `dev.enabl.health`
+
+**✅ Staging Environment**
+- Backend: `enabl-backend-staging` (operational)
+- API Gateway: `https://y1rp7krhca.execute-api.us-east-1.amazonaws.com/staging/`
+- Frontend: Ready for App Runner deployment → `staging.enabl.health`
+
+**🔄 Production Environment**
+- Backend: Resource cleanup required before deployment
+- API Gateway: Pending production backend deployment
+- Frontend: App Runner + CloudFront setup → `enabl.health`
 
 ### System Architecture Diagram
 
 ```mermaid
 graph TB
     %% User Interface Layer
-    UI[Enabl Web App<br/>Next.js Frontend] --> CF[CloudFront CDN]
+    UI[Enabl Web App<br/>Next.js Frontend] --> AR[AWS App Runner<br/>Container Hosting]
+    AR --> CF[CloudFront CDN<br/>Production Only]
     
     %% API Gateway Layer
-    CF --> AG[API Gateway<br/>REST API + CORS]
-    AG --> AUTH{Cognito<br/>Authentication}
+    UI --> AG[API Gateway<br/>REST API + CORS]
+    AG --> AUTH{Cognito<br/>User Authentication}
     
-    %% Agent Router
-    AUTH --> AR[Agent Router<br/>Lambda Function]
+    %% Agent Router & Lambda Functions
+    AUTH --> ROUTER[Agent Router<br/>Lambda Function]
     
-    %% Bedrock AgentCore Layer
-    AR --> BA1[Health Assistant<br/>AgentCore Container]
-    AR --> BA2[Appointment Agent<br/>AgentCore Container] 
-    AR --> BA3[Community Agent<br/>AgentCore Container]
-    AR --> BA4[Document Agent<br/>AgentCore Container]
+    %% Bedrock AI Agents
+    ROUTER --> HEALTH[Health Assistant<br/>amazon.nova-pro-v1:0]
+    ROUTER --> APPT[Appointment Agent<br/>amazon.nova-lite-v1:0]
+    ROUTER --> COMM[Community Agent<br/>amazon.titan-text-express-v1]
+    ROUTER --> DOC[Document Agent<br/>amazon.titan-text-express-v1]
     
     %% Foundation Models
-    BA1 --> BM[Amazon Bedrock<br/>Titan Text Express v1]
-    BA2 --> BM
-    BA3 --> BM
-    BA4 --> BM
+    HEALTH --> BM[Amazon Bedrock<br/>Foundation Models]
+    APPT --> BM
+    COMM --> BM
+    DOC --> BM
     
-    %% Data Storage
-    BA1 --> DDB[DynamoDB<br/>Users, Chats, Sessions]
-    BA2 --> DDB2[DynamoDB<br/>Appointments, Reminders]
-    BA3 --> DDB3[DynamoDB<br/>Community Content]
-    BA4 --> S3[S3 Bucket<br/>Documents & Files]
-    BA4 --> DDB4[DynamoDB<br/>Document Metadata]
+    %% Data Storage Layer
+    HEALTH --> DDB1[DynamoDB<br/>Users & Chat History]
+    APPT --> DDB2[DynamoDB<br/>Appointments & Reminders]
+    COMM --> DDB3[DynamoDB<br/>Community Content]
+    DOC --> S3[S3 Bucket<br/>Document Storage]
+    DOC --> DDB4[DynamoDB<br/>Document Metadata]
+    
+    %% Knowledge Base & RAG
+    HEALTH --> KB[Knowledge Base<br/>Medical Guidelines]
+    DOC --> KB
     
     %% External Integrations
-    BA2 --> GCal[Google Calendar API]
-    BA2 --> SNS[SNS<br/>SMS Notifications]
-    BA2 --> SES[SES<br/>Email Notifications]
+    APPT --> GCal[Google Calendar API]
+    APPT --> SNS[SNS Notifications]
+    UI --> GOOGLE[Google OAuth]
     
-    %% Container Registry
-    ECR[Amazon ECR<br/>Container Registry] -.-> BA1
-    ECR -.-> BA2
-    ECR -.-> BA3
+    %% Environment Isolation
+    subgraph "Development"
+        DDB1 --> DEV_DB[enabl-users-dev]
+        S3 --> DEV_S3[enabl-documents-dev]
+    end
+    
+    subgraph "Staging" 
+        DDB1 --> STAGE_DB[enabl-users-staging]
+        S3 --> STAGE_S3[enabl-documents-staging]
+    end
+    
+    subgraph "Production"
+        DDB1 --> PROD_DB[enabl-users-prod]
+        S3 --> PROD_S3[enabl-documents-prod]
+    end
+```
     ECR -.-> BA4
     
     %% Monitoring
@@ -74,23 +108,65 @@ graph TB
 - **Amazon DynamoDB**: NoSQL database for user data, chats, documents, and appointments
 - **Amazon S3**: Object storage for documents and user uploads with HIPAA compliance
 - **API Gateway**: REST API endpoints with Cognito authentication and rate limiting
-- **AWS Lambda**: Serverless business logic functions (containerized for AgentCore)
+- **AWS Lambda**: Serverless business logic functions with Bedrock agent integration
 - **CloudFront**: Content delivery network for global performance
-- **Amazon ECR**: Container registry for AgentCore Docker images
+- **Route53**: DNS management for custom domains
 
-### AI & AgentCore Architecture
-- **Amazon Bedrock AgentCore**: Advanced reasoning and planning capabilities for health agents
-- **Amazon Titan Text Express**: Primary foundation model for health guidance
-- **Multi-Agent System**: 4 specialized AI agents with intelligent routing
-- **Docker Containerization**: Lambda-compatible containers for AgentCore deployment
-- **Session Management**: Persistent conversation context and reasoning traces
+### Amazon Bedrock AI Agents
+
+**Multi-Agent Architecture**: Four specialized AI agents with intelligent routing and context sharing.
+
+#### 1. Health Assistant Agent
+- **Model**: `amazon.nova-pro-v1:0` (advanced reasoning)
+- **Purpose**: Primary health consultations and guidance
+- **Capabilities**: Natural language processing, intent recognition, medical knowledge
+- **Access**: Guest and authenticated users
+
+#### 2. Community Agent  
+- **Model**: `amazon.titan-text-express-v1` (content curation)
+- **Purpose**: Health content discovery and community insights
+- **Capabilities**: Content validation, personalized recommendations, trending analysis
+- **Access**: Guest and authenticated users (personalization for logged-in)
+
+#### 3. Appointment Agent
+- **Model**: `amazon.nova-lite-v1:0` (scheduling intelligence)
+- **Purpose**: Smart appointment booking and calendar management
+- **Capabilities**: Multi-calendar integration, conflict resolution, intelligent notifications
+- **Access**: Authenticated users only
+
+#### 4. Document Agent
+- **Model**: `amazon.titan-text-express-v1` (document processing)
+- **Purpose**: Secure document management and analysis
+- **Capabilities**: AI-powered categorization, content extraction, semantic search
+- **Access**: Authenticated users only
+
+### Foundation Model Strategy
+
+**Current Implementation**: Amazon-only models for simplified integration and cost management.
+
+**Environment-Specific Models**:
+```yaml
+Development (Cost-Optimized):
+  Health Assistant: amazon.titan-text-express-v1
+  Community Agent: amazon.titan-text-lite-v1  
+  Appointment Agent: amazon.nova-micro-v1:0
+  Document Agent: amazon.titan-text-express-v1
+
+Staging & Production:
+  Health Assistant: amazon.nova-pro-v1:0
+  Community Agent: amazon.titan-text-express-v1
+  Appointment Agent: amazon.nova-lite-v1:0  
+  Document Agent: amazon.titan-text-express-v1
+```
+
+**Future Scalability**: Architecture designed for easy integration of Anthropic Claude, Cohere, and other foundation models based on user preferences.
 
 ### Security & Compliance
 - End-to-end encryption for sensitive health data
 - HIPAA-compliant infrastructure configuration
 - IAM roles with least-privilege access
-- VPC isolation for sensitive resources
-- Container security with ECR image scanning
+- Environment isolation for complete data separation
+- Bedrock guardrails for AI safety and compliance
 
 ## 🚀 Quick Start
 
@@ -441,18 +517,93 @@ MODEL_ID=amazon.titan-text-express-v1
 
 ## 🚀 Deployment Process
 
-### CI/CD Pipeline
-The infrastructure follows a GitOps approach:
+### Three-Tier Deployment Strategy
 
-1. **Development**: Automatic deployment on merge to `develop`
-2. **Staging**: Manual promotion from development
-3. **Production**: Manual deployment with approval process
+**Environment Isolation**: Complete separation of resources across environments for security and testing.
 
-### Zero-Downtime Deployments
-- Blue-green deployments for API Gateway
-- Rolling updates for Lambda functions
-- Database migrations with backwards compatibility
-- CloudFront invalidation strategies
+#### Development Environment
+```bash
+# Deploy development backend
+npx cdk deploy EnablBackendStack-development --require-approval never
+
+# Status: ✅ Operational
+# API: https://9zbq4e5m86.execute-api.us-east-1.amazonaws.com/dev/
+# Features: Rapid iteration, cost-optimized resources
+```
+
+#### Staging Environment  
+```bash
+# Deploy staging backend
+npx cdk deploy EnablBackendStack-staging --require-approval never
+
+# Status: ✅ Operational  
+# API: https://y1rp7krhca.execute-api.us-east-1.amazonaws.com/staging/
+# Features: Production-like testing, realistic data volumes
+```
+
+#### Production Environment
+```bash
+# Deploy production backend (manual approval required)
+npx cdk deploy EnablBackendStack-production --require-approval always
+
+# Status: 🔄 Pending (resource cleanup required)
+# Features: Full-scale resources, HIPAA compliance, global CDN
+```
+
+### Infrastructure Evolution Strategy
+
+**Conflict Resolution**: Our application continuously evolves, requiring flexible infrastructure management.
+
+**Preferred Approach - Stack Updates:**
+```bash
+# Update existing infrastructure incrementally
+npx cdk deploy EnablBackendStack-development --require-approval never
+```
+
+**Emergency Recovery - Clean Deployment:**
+```bash
+# Full environment recreation (development only)
+npx cdk destroy EnablBackendStack-development --force
+npx cdk deploy EnablBackendStack-development --require-approval never
+```
+
+### Frontend Integration
+
+**App Runner Services**: Simple container hosting with GitHub auto-deployment.
+
+```bash
+# Create frontend services (in enabl-webapp folder)
+./scripts/setup-staging.sh      # Complete staging setup
+./scripts/setup-production.sh   # Complete production setup
+
+# Manual service creation
+make create-staging-service     # Staging App Runner
+make create-prod-service       # Production App Runner
+```
+
+### Environment Configuration
+
+**Backend APIs**: Each environment has dedicated API endpoints and resources.
+
+| Environment | Backend API | Frontend URL | Status |
+|-------------|-------------|--------------|---------|
+| Development | `9zbq4e5m86.execute-api.us-east-1.amazonaws.com/dev/` | `dev.enabl.health` | ✅ Ready |
+| Staging | `y1rp7krhca.execute-api.us-east-1.amazonaws.com/staging/` | `staging.enabl.health` | ✅ Ready |
+| Production | `production-api.enabl.health/` | `enabl.health` | 🔄 Pending |
+
+### CI/CD Pipeline Strategy
+
+**Development Branch**: 
+- Auto-deploys to development environment
+- Continuous integration and testing
+
+**Main Branch**:
+- Auto-deploys to staging environment  
+- Production-ready code validation
+
+**Production Deployment**:
+- Manual deployment from main branch
+- Requires approval and monitoring
 
 ## 📈 Monitoring & Observability
 

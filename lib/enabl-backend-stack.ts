@@ -569,10 +569,10 @@ export class EnablBackendStack extends cdk.Stack {
       environment: {
         ...config.lambda.environment,
         REGION: config.region,
-        HEALTH_ASSISTANT_FUNCTION: 'enabl-health-assistant-dev', // Will be updated when agent functions are created
-        COMMUNITY_AGENT_FUNCTION: 'enabl-community-agent-dev',
-        DOCUMENT_AGENT_FUNCTION: 'enabl-document-agent-dev',
-        APPOINTMENT_AGENT_FUNCTION: 'enabl-appointment-agent-dev',
+        HEALTH_ASSISTANT_FUNCTION: config.bedrock.agents.healthAssistant.name,
+        COMMUNITY_AGENT_FUNCTION: config.bedrock.agents.communityAgent.name,
+        DOCUMENT_AGENT_FUNCTION: config.bedrock.agents.documentAgent.name,
+        APPOINTMENT_AGENT_FUNCTION: config.bedrock.agents.appointmentAgent.name,
       },
     });
 
@@ -590,7 +590,7 @@ export class EnablBackendStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lib/lambda/health-assistant'),
       timeout: cdk.Duration.seconds(config.lambda.timeout),
       memorySize: config.lambda.memorySize,
-      functionName: 'enabl-health-assistant-dev',
+      functionName: config.bedrock.agents.healthAssistant.name,
       environment: {
         ...config.lambda.environment,
         REGION: config.region,
@@ -614,7 +614,7 @@ export class EnablBackendStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lib/lambda/appointment-agent'),
       timeout: cdk.Duration.seconds(config.lambda.timeout),
       memorySize: config.lambda.memorySize,
-      functionName: 'enabl-appointment-agent-dev',
+      functionName: config.bedrock.agents.appointmentAgent.name,
       environment: {
         ...config.lambda.environment,
         REGION: config.region,
