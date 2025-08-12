@@ -74,8 +74,8 @@ export class EnablBackendStack extends cdk.Stack {
       selfSignUpEnabled: true,
       userVerification: {
         emailSubject: 'Welcome to enabl! Verify your email',
-        emailBody: 'Hello! Welcome to enabl, your AI-powered everyday health assistant. Please verify your email by clicking this link: {##Verify Email##}',
-        emailStyle: cognito.VerificationEmailStyle.LINK,
+        emailBody: 'Hello! Welcome to enabl, your AI-powered everyday health assistant. Your verification code is {####}',
+        emailStyle: cognito.VerificationEmailStyle.CODE,
       },
       signInAliases: {
         email: true,
