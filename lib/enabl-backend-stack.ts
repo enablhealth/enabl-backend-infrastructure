@@ -74,8 +74,8 @@ export class EnablBackendStack extends cdk.Stack {
       selfSignUpEnabled: true,
       userVerification: {
         emailSubject: 'Welcome to enabl! Verify your email',
-        emailBody: 'Hello! Welcome to enabl, your AI-powered everyday health assistant. Your verification code is {####}',
-        emailStyle: cognito.VerificationEmailStyle.CODE,
+        emailBody: 'Hello! Welcome to enabl, your AI-powered everyday health assistant. Please verify your email by clicking this link: {##Verify Email##}',
+        emailStyle: cognito.VerificationEmailStyle.LINK,
       },
       signInAliases: {
         email: true,
@@ -618,6 +618,8 @@ export class EnablBackendStack extends cdk.Stack {
       environment: {
         ...config.lambda.environment,
         REGION: config.region,
+  // Use configured table name to avoid "development" vs "dev" drift
+  APPOINTMENTS_TABLE: config.dynamodb.tables.appointments,
       },
     });
 
@@ -641,6 +643,95 @@ export class EnablBackendStack extends cdk.Stack {
         'dynamodb:Scan',
       ],
       resources: [this.dynamoTables.appointments.tableArn],
+    }));
+
+    // Document Agent Lambda Function - Enhanced with ChatGPT-level analysis
+    const documentAgentFunction = new lambda.Function(this, 'DocumentAgentFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/document-agent'),
+      timeout: cdk.Duration.minutes(5), // Increased for OCR processing
+      memorySize: 1024, // Increased for document analysis
+      functionName: config.bedrock.agents.documentAgent.name,
+      environment: {
+        ...config.lambda.environment,
+        REGION: config.region,
+        MODEL_ID: 'amazon.nova-pro-v1:0', // Upgraded for ChatGPT-level analysis
+  // Use configured table name to avoid "development" vs "dev" drift
+  DOCUMENTS_TABLE: config.dynamodb.tables.documents,
+        DOCUMENTS_BUCKET: this.s3Buckets.documents.bucketName,
+        USER_UPLOADS_BUCKET: this.s3Buckets.userUploads.bucketName,
+      },
+    });
+
+    // Grant document agent access to Bedrock, S3, DynamoDB, and Textract
+    documentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:RetrieveAndGenerate',
+      ],
+      resources: ['*'],
+    }));
+
+    documentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        's3:GetObject',
+        's3:GetObjectVersion',
+      ],
+      resources: [
+        `${this.s3Buckets.documents.bucketArn}/*`,
+        `${this.s3Buckets.userUploads.bucketArn}/*`,
+      ],
+    }));
+
+    documentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:GetItem',
+        'dynamodb:PutItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:Query',
+        'dynamodb:Scan',
+      ],
+      resources: [this.dynamoTables.documents.tableArn],
+    }));
+
+    // Grant Textract permissions for OCR processing
+    documentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'textract:DetectDocumentText',
+        'textract:AnalyzeDocument',
+        'textract:GetDocumentAnalysis',
+        'textract:StartDocumentAnalysis',
+      ],
+      resources: ['*'],
+    }));
+
+    // Community Agent Lambda Function
+    const communityAgentFunction = new lambda.Function(this, 'CommunityAgentFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/community-agent'),
+      timeout: cdk.Duration.seconds(config.lambda.timeout),
+      memorySize: config.lambda.memorySize,
+      functionName: config.bedrock.agents.communityAgent.name,
+      environment: {
+        ...config.lambda.environment,
+        REGION: config.region,
+      },
+    });
+
+    // Grant community agent access to Bedrock
+    communityAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:RetrieveAndGenerate',
+      ],
+      resources: ['*'],
     }));
 
     // Chat endpoint with real Lambda integration

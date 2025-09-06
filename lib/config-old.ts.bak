@@ -1,0 +1,440 @@
+import * as cdk from 'aws-cdk-lib';
+
+/**
+ * Configuration interface for Enabl Health backend infrastructure
+ * Defines environment-specific settings and AWS resource configurations
+ * 
+ * Aligned with copilot instructions for three-tier environment strategy:
+ * - Development: Lightweight resources for rapid iteration
+ * - Staging: Production-like resources for realistic testing
+ * - Production: Full-scale resources with high availability
+ */
+export interface EnablConfig {
+  environment: 'development' | 'staging' | 'production';
+  region: string;
+  
+  // Cognito configuration for authentication
+  cognito: {
+    userPoolName: string;
+    userPoolClientName: string;
+    domainPrefix: string;
+    passwordPolicy: {
+      minLength: number;
+      requireLowercase: boolean;
+      requireUppercase: boolean;
+      requireDigits: boolean;
+      requireSymbols: boolean;
+    };
+    oauth: {
+      callbackUrls: string[];
+      logoutUrls: string[];
+    };
+  };
+  
+  // DynamoDB configuration for data storage
+  dynamodb: {
+    tables: {
+      users: string;
+      chats: string;
+      documents: string;
+    };
+    billingMode: 'PAY_PER_REQUEST' | 'PROVISIONED';
+    pointInTimeRecovery: boolean;
+  };
+  
+  // S3 configuration for document and knowledge base storage
+  s3: {
+    buckets: {
+      documents: string;
+      knowledgeBase: string;
+    };
+    corsOrigins: string[];
+  };
+  
+  // Amazon Bedrock configuration for AI agents
+  bedrock: {
+    agents: {
+      healthAssistant: {
+        name: string;
+        model: string; // amazon.nova-pro-v1:0
+      };
+      communityAgent: {
+        name: string;
+        model: string; // amazon.titan-text-express-v1
+      };
+      appointmentAgent: {
+        name: string;
+        model: string; // anthropic.claude-3-haiku-20240307-v1:0
+      };
+      documentAgent: {
+        name: string;
+        model: string; // cohere.command-text-v14
+      };
+    };
+    knowledgeBase: {
+      name: string;
+      description: string;
+    };
+  };
+  
+  // AWS Secrets Manager for secure credential storage
+  secretsManager: {
+    googleOAuth: string;
+    appleSignIn: string;
+  };
+  
+  // Monitoring and compliance
+  monitoring: {
+    logRetention: number;
+    enableCloudTrail: boolean; // For HIPAA compliance
+    enableDetailedMetrics: boolean;
+  };
+}
+  dynamodb: {
+    tables: {
+      users: string;
+      chats: string;
+      documents: string;
+      appointments: string;
+      integrations: string;
+    };
+    billingMode: 'PAY_PER_REQUEST' | 'PROVISIONED';
+    pointInTimeRecovery: boolean;
+  };
+  
+  // S3 configuration
+  s3: {
+    buckets: {
+      documents: string;
+      userUploads: string;
+      backups: string;
+    };
+    corsOrigins: string[];
+  };
+  
+  // API Gateway configuration
+  api: {
+    name: string;
+    description: string;
+    throttle: {
+      rateLimit: number;
+      burstLimit: number;
+    };
+  };
+  
+  // Lambda configuration
+  lambda: {
+    runtime: string;
+    timeout: number;
+    memorySize: number;
+    environment: {
+      NODE_ENV: string;
+      LOG_LEVEL: string;
+    };
+  };
+  
+  // Monitoring and logging
+  monitoring: {
+    logRetention: number;
+    enableXRay: boolean;
+    enableDetailedMetrics: boolean;
+  };
+}
+
+/**
+ * Development environment configuration
+ */
+const developmentConfig: EnablConfig = {
+  environment: 'development',
+  region: 'us-east-1',
+  
+  domain: {
+    main: 'dev.enabl.health',
+    api: 'api-dev.enabl.health',
+    cdn: 'cdn-dev.enabl.health',
+  },
+  
+  cognito: {
+    userPoolName: 'enabl-users-dev',
+    userPoolClientName: 'enabl-web-client-dev',
+    domainPrefix: 'enabl-auth-dev',
+    passwordPolicy: {
+      minLength: 8,
+      requireLowercase: true,
+      requireUppercase: true,
+      requireDigits: true,
+      requireSymbols: false,
+    },
+    oauth: {
+      scopes: ['email', 'openid', 'profile'],
+      flows: ['authorization_code'],
+      callbackUrls: [
+        'http://localhost:3000/auth/callback',
+        'https://dev.enabl.health/auth/callback',
+      ],
+      logoutUrls: [
+        'http://localhost:3000',
+        'https://dev.enabl.health',
+      ],
+    },
+    socialProviders: {
+      google: {
+        clientId: '842423158981-8ntg57v6hdb365nevu3d4ds9i2j7pooq.apps.googleusercontent.com',
+      },
+      apple: {
+        clientId: 'PENDING', // Will be updated when Apple client ID is available
+      },
+    },
+  },
+  
+  dynamodb: {
+    tables: {
+      users: 'enabl-users-dev',
+      chats: 'enabl-chats-dev',
+      documents: 'enabl-documents-dev',
+      appointments: 'enabl-appointments-dev',
+      integrations: 'enabl-integrations-dev',
+    },
+    billingMode: 'PAY_PER_REQUEST',
+    pointInTimeRecovery: true,
+  },
+  
+  s3: {
+    buckets: {
+      documents: 'enabl-documents-dev',
+      userUploads: 'enabl-user-uploads-dev',
+      backups: 'enabl-backups-dev',
+    },
+    corsOrigins: [
+      'http://localhost:3000',
+      'https://dev.enabl.health',
+    ],
+  },
+  
+  api: {
+    name: 'enabl-api-dev',
+    description: 'Enabl Health API - Development Environment',
+    throttle: {
+      rateLimit: 1000,
+      burstLimit: 2000,
+    },
+  },
+  
+  lambda: {
+    runtime: 'nodejs18.x',
+    timeout: 30,
+    memorySize: 256,
+    environment: {
+      NODE_ENV: 'development',
+      LOG_LEVEL: 'debug',
+    },
+  },
+  
+  monitoring: {
+    logRetention: 7, // 7 days for development
+    enableXRay: true,
+    enableDetailedMetrics: true,
+  },
+};
+
+/**
+ * Staging environment configuration
+ */
+const stagingConfig: EnablConfig = {
+  ...developmentConfig,
+  environment: 'staging',
+  
+  domain: {
+    main: 'staging.enabl.health',
+    api: 'api-staging.enabl.health',
+    cdn: 'cdn-staging.enabl.health',
+  },
+  
+  cognito: {
+    ...developmentConfig.cognito,
+    userPoolName: 'enabl-users-staging',
+    userPoolClientName: 'enabl-web-client-staging',
+    domainPrefix: 'enabl-auth-staging',
+    oauth: {
+      ...developmentConfig.cognito.oauth,
+      callbackUrls: ['https://staging.enabl.health/auth/callback'],
+      logoutUrls: ['https://staging.enabl.health'],
+    },
+  },
+  
+  dynamodb: {
+    ...developmentConfig.dynamodb,
+    tables: {
+      users: 'enabl-users-staging',
+      chats: 'enabl-chats-staging',
+      documents: 'enabl-documents-staging',
+      appointments: 'enabl-appointments-staging',
+      integrations: 'enabl-integrations-staging',
+    },
+  },
+  
+  s3: {
+    buckets: {
+      documents: 'enabl-documents-staging',
+      userUploads: 'enabl-user-uploads-staging',
+      backups: 'enabl-backups-staging',
+    },
+    corsOrigins: ['https://staging.enabl.health'],
+  },
+  
+  api: {
+    name: 'enabl-api-staging',
+    description: 'Enabl Health API - Staging Environment',
+    throttle: {
+      rateLimit: 5000,
+      burstLimit: 10000,
+    },
+  },
+  
+  lambda: {
+    ...developmentConfig.lambda,
+    environment: {
+      NODE_ENV: 'staging',
+      LOG_LEVEL: 'info',
+    },
+  },
+  
+  monitoring: {
+    logRetention: 30, // 30 days for staging
+    enableXRay: true,
+    enableDetailedMetrics: true,
+  },
+};
+
+/**
+ * Production environment configuration
+ */
+const productionConfig: EnablConfig = {
+  ...stagingConfig,
+  environment: 'production',
+  
+  domain: {
+    main: 'enabl.health',
+    api: 'api.enabl.health',
+    cdn: 'cdn.enabl.health',
+  },
+  
+  cognito: {
+    ...stagingConfig.cognito,
+    userPoolName: 'enabl-users-prod',
+    userPoolClientName: 'enabl-web-client-prod',
+    domainPrefix: 'enabl-auth-prod',
+    socialProviders: {
+      google: {
+        clientId: '965402584740-1j4t43ijt0rvlg2lq9hhaots5kg9v2tm.apps.googleusercontent.com',
+      },
+      apple: {
+        clientId: 'PENDING', // Will be updated when Apple client ID is available
+      },
+    },
+    oauth: {
+      ...stagingConfig.cognito.oauth,
+      callbackUrls: ['https://enabl.health/auth/callback'],
+      logoutUrls: ['https://enabl.health'],
+    },
+  },
+  
+  dynamodb: {
+    ...stagingConfig.dynamodb,
+    tables: {
+      users: 'enabl-users-prod',
+      chats: 'enabl-chats-prod',
+      documents: 'enabl-documents-prod',
+      appointments: 'enabl-appointments-prod',
+      integrations: 'enabl-integrations-prod',
+    },
+  },
+  
+  s3: {
+    buckets: {
+      documents: 'enabl-documents-prod',
+      userUploads: 'enabl-user-uploads-prod',
+      backups: 'enabl-backups-prod',
+    },
+    corsOrigins: ['https://enabl.health'],
+  },
+  
+  api: {
+    name: 'enabl-api-prod',
+    description: 'Enabl Health API - Production Environment',
+    throttle: {
+      rateLimit: 10000,
+      burstLimit: 20000,
+    },
+  },
+  
+  lambda: {
+    ...stagingConfig.lambda,
+    timeout: 60, // Longer timeout for production
+    memorySize: 512, // More memory for production
+    environment: {
+      NODE_ENV: 'production',
+      LOG_LEVEL: 'warn',
+    },
+  },
+  
+  monitoring: {
+    logRetention: 365, // 1 year for production
+    enableXRay: true,
+    enableDetailedMetrics: true,
+  },
+};
+
+/**
+ * Get configuration for the specified environment
+ * 
+ * @param environment - Target environment (development, staging, production)
+ * @returns Environment-specific configuration
+ */
+export function getConfig(environment: string): EnablConfig {
+  switch (environment) {
+    case 'development':
+    case 'dev':
+      return developmentConfig;
+    case 'staging':
+    case 'stage':
+      return stagingConfig;
+    case 'production':
+    case 'prod':
+      return productionConfig;
+    default:
+      console.warn(`⚠️  Unknown environment: ${environment}. Defaulting to development.`);
+      return developmentConfig;
+  }
+}
+
+/**
+ * Validate configuration settings
+ * 
+ * @param config - Configuration to validate
+ * @throws Error if configuration is invalid
+ */
+export function validateConfig(config: EnablConfig): void {
+  // Validate required fields
+  if (!config.environment) {
+    throw new Error('Environment is required');
+  }
+  
+  if (!config.region) {
+    throw new Error('AWS region is required');
+  }
+  
+  if (!config.domain.main) {
+    throw new Error('Main domain is required');
+  }
+  
+  if (!config.cognito.socialProviders.google.clientId || config.cognito.socialProviders.google.clientId === 'PENDING') {
+    console.warn('⚠️  Google OAuth client ID is not configured');
+  }
+  
+  if (!config.cognito.socialProviders.apple.clientId || config.cognito.socialProviders.apple.clientId === 'PENDING') {
+    console.warn('⚠️  Apple OAuth client ID is not configured');
+  }
+  
+  console.log('✅ Configuration validation passed');
+}

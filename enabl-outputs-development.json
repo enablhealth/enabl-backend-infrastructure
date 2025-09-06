@@ -1,0 +1,11 @@
+{
+  "EnablHealthStack-dev": {
+    "UserPoolClientId": "70rvm2m9a3ko220godg8u31m8u",
+    "AiApiEndpointA8C722A9": "https://1uuufickhk.execute-api.us-east-1.amazonaws.com/prod/",
+    "UserPoolId": "us-east-1_lBBFpwOnU",
+    "KnowledgeBaseBucketName": "enabl-knowledge-base-development",
+    "VectorCollectionEndpoint": "https://aanb5j1ftrwwtbajnyk2.us-east-1.aoss.amazonaws.com",
+    "DocumentsBucketName": "enabl-documents-dev",
+    "MainApiEndpoint4C1E22DD": "https://c8yysgn8q1.execute-api.us-east-1.amazonaws.com/prod/"
+  }
+}

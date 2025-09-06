@@ -1,0 +1,20 @@
+{
+  "EnablHealthStack-dev": {
+    "UserPoolClientId": "70rvm2m9a3ko220godg8u31m8u",
+    "AiApiEndpointA8C722A9": "https://1uuufickhk.execute-api.us-east-1.amazonaws.com/prod/",
+    "UserPoolId": "us-east-1_lBBFpwOnU",
+    "KnowledgeBaseBucketName": "enabl-knowledge-base-development",
+    "VectorCollectionEndpoint": "https://aanb5j1ftrwwtbajnyk2.us-east-1.aoss.amazonaws.com",
+    "DocumentsBucketName": "enabl-documents-dev",
+    "MainApiEndpoint4C1E22DD": "https://c8yysgn8q1.execute-api.us-east-1.amazonaws.com/prod/"
+  },
+  "EnablHealthStack-staging": {
+    "UserPoolClientId": "2dp97hevvmtaf14g4lruveveno",
+    "AiApiEndpointA8C722A9": "https://asfvr8zr21.execute-api.us-east-1.amazonaws.com/prod/",
+    "UserPoolId": "us-east-1_ex9P9pFRA",
+    "KnowledgeBaseBucketName": "enabl-knowledge-base-staging",
+    "VectorCollectionEndpoint": "https://hd50vpue1kdyt1n1jj4l.us-east-1.aoss.amazonaws.com",
+    "DocumentsBucketName": "enabl-documents-staging",
+    "MainApiEndpoint4C1E22DD": "https://v5iumk6jm9.execute-api.us-east-1.amazonaws.com/prod/"
+  }
+}

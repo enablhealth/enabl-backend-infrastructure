@@ -12,6 +12,10 @@
     "deploy:dev": "cdk deploy --context environment=development",
     "deploy:staging": "cdk deploy --context environment=staging",
     "deploy:prod": "cdk deploy --context environment=production",
+    "deploy:secrets": "./deploy-secrets.sh",
+    "secrets:dev": "cdk deploy EnablSecretsStack-development --app 'npx ts-node bin/secrets-app.ts' --context environment=development",
+    "secrets:staging": "cdk deploy EnablSecretsStack-staging --app 'npx ts-node bin/secrets-app.ts' --context environment=staging",
+    "secrets:prod": "cdk deploy EnablSecretsStack-production --app 'npx ts-node bin/secrets-app.ts' --context environment=production",
     "destroy": "cdk destroy",
     "diff": "cdk diff",
     "synth": "cdk synth",
@@ -45,6 +49,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.95.0",
-    "constructs": "^10.3.0"
+  "constructs": "^10.3.0",
+  "@aws-sdk/client-lambda": "^3.872.0"
   }
 }

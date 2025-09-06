@@ -12,6 +12,7 @@ import boto3
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import os
+import re
 
 # Configure logging
 logger = logging.getLogger()
@@ -20,10 +21,12 @@ logger.setLevel(logging.INFO)
 # Initialize AWS clients
 bedrock_runtime = boto3.client('bedrock-runtime', region_name='us-east-1')
 dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+lambda_client = boto3.client('lambda', region_name='us-east-1')
 
 # DynamoDB table for conversation memory
 CONVERSATION_TABLE = os.environ.get('CONVERSATION_TABLE', 'enabl-conversations-development')
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
+DOCUMENT_AGENT_FUNCTION = os.environ.get('DOCUMENT_AGENT_FUNCTION', f'enabl-document-agent-{ENVIRONMENT}')
 
 logger.info(f"Agent Router starting in {ENVIRONMENT} environment")
 logger.info(f"Using conversation table: {CONVERSATION_TABLE}")
@@ -43,7 +46,8 @@ AGENT_RUNTIME_ARNS = {
     'health-assistant': '775525057465.dkr.ecr.us-east-1.amazonaws.com/enabl-health-assistant-python:latest',
     'appointment-agent': '775525057465.dkr.ecr.us-east-1.amazonaws.com/enabl-appointment-agent-python:latest',
     'community-agent': '775525057465.dkr.ecr.us-east-1.amazonaws.com/enabl-community-agent-python:latest',
-    'document-agent': 'arn:aws:bedrock-agentcore:us-east-1:775525057465:runtime/enabl_document_agent-pending'
+    'document-agent': 'arn:aws:bedrock-agentcore:us-east-1:775525057465:runtime/enabl_document_agent-pending',
+    'knowledge-agent': 'enabl-knowledge-agent-lambda'
 }
 
 # Agent-specific system prompts
@@ -88,8 +92,329 @@ AGENT_KEYWORDS = {
         'medical record', 'lab result', 'test result', 'scan', 'x-ray',
         'blood work', 'biopsy', 'pathology', 'interpretation', 'review',
         'pdf', 'image', 'attachment', 'chart', 'history'
+    ],
+    'knowledge-agent': [
+        'knowledge', 'guideline', 'policy', 'regulation', 'compliance', 'audit',
+        'regional', 'country', 'australia', 'ndis', 'practice standards', 'quality indicators',
+        'requirements', 'checklist', 'documents needed', 'what do i need',
+        'classify', 'classification', 'categorize', 'categories', 'organize', 'group', 'structure', 'taxonomy'
     ]
 }
+
+
+def detect_document_qa_intent(message: str) -> Optional[str]:
+    """Detect specific Document QA intents like recipient/issuer/signatory/date.
+    Returns one of: 'recipient', 'issuer', 'signatory', 'date', or None.
+    """
+    if not message:
+        return None
+    m = message.lower()
+    # Recipient / subject
+    if re.search(r"who\s+is\s+(this|the)\s+document\s+for\b|for\s+who(m)?\b|who\s+is\s+it\s+for\b", m):
+        return 'recipient'
+    # Issuer
+    if re.search(r"who\s+(issued|created|made|authored)\b|issuer|issuing\s+party", m):
+        return 'issuer'
+    # Signatory
+    if re.search(r"who\s+(signed|signature)\b|signatory", m):
+        return 'signatory'
+    # Date
+    if re.search(r"(when|date)\b|what\s+date", m):
+        return 'date'
+    return None
+
+
+def rewrite_document_question(original: str, intent: Optional[str]) -> str:
+    """Rewrite user question with precise instructions for the Document Agent to reduce ambiguity.
+    Keeps original query context but adds strict guidance.
+    """
+    if not intent:
+        return original
+
+    guidance = []
+    if intent == 'recipient':
+        guidance.append(
+            "Identify the recipient/subject the document is about (the person/participant it is for). "
+            "Do NOT answer with the organization or issuer name."
+        )
+        guidance.append(
+            "Prefer names near fields like 'Participant', 'Participant Name', 'Client', 'Consumer', or in signing blocks labelled for the participant."
+        )
+        guidance.append(
+            "Return a concise answer: the person's full name only, and a very short evidence snippet (<= 100 chars)."
+        )
+    elif intent == 'issuer':
+        guidance.append("Identify the organization or entity that issued/created the document.")
+        guidance.append("Return the organization name and a short evidence snippet.")
+    elif intent == 'signatory':
+        guidance.append("Identify the person who signed the document (signatory). Return the name and short evidence snippet.")
+    elif intent == 'date':
+        guidance.append("Identify the document date (issue or effective date). Return the date value and short evidence snippet.")
+
+    preamble = (
+        "STRICT INSTRUCTIONS: " + " " .join(guidance) +
+        "\nIf multiple candidates, choose the best match for the requested role."
+    )
+    return f"{original}\n\n{preamble}"
+
+
+def is_document_listing_intent(message: str) -> bool:
+    """Heuristic to detect clear document listing requests."""
+    if not message:
+        return False
+    m = message.lower()
+    verbs = ['list', 'show', 'name', 'what', 'which', 'display', 'give', 'see', 'view', 'all']
+    nouns = ['doc', 'docs', 'document', 'documents', 'file', 'files', 'upload', 'uploads', 'history']
+    if any(v in m for v in verbs) and any(n in m for n in nouns):
+        if 'my ' in m or ' i uploaded' in m or 'uploaded' in m:
+            return True
+    if 'list my documents' in m or 'show my documents' in m or 'list my files' in m:
+        return True
+    return False
+
+
+def extract_filename_from_message(message: str) -> Optional[str]:
+    """Extract a likely filename (e.g., *.pdf) from the message, if any."""
+    if not message:
+        return None
+    m = message.strip()
+    # Simple token scan for a .pdf-like token
+    candidates = re.findall(r"([A-Za-z0-9_\-./]+\.pdf)", m, flags=re.IGNORECASE)
+    if candidates:
+        # Prefer the longest token (often includes more descriptive parts)
+        return sorted(candidates, key=len, reverse=True)[0]
+    return None
+
+
+def looks_like_org(answer_text: str) -> bool:
+    """Heuristic to detect organization names in an answer where a person is expected."""
+    if not answer_text:
+        return False
+    t = answer_text.strip()
+    tl = t.lower()
+    org_keywords = [
+        ' pty ', ' pty. ', ' ltd', ' limited', ' inc', ' llc', ' company', ' pty ltd', ' pty. ltd', ' proprietary'
+    ]
+    if any(k in tl for k in org_keywords):
+        return True
+    # All-caps word longer than 3 might indicate org (heuristic); allow acronyms up to 3 chars
+    tokens = re.findall(r"[A-Z]{4,}", t)
+    return len(tokens) > 0
+
+
+def invoke_document_agent_lambda(message: str, user_id: str, session_id: str) -> Dict[str, Any]:
+    """Call the NodeJS Document Agent Lambda directly to get data-backed results."""
+    try:
+        # Add precise guidance for common QA intents to avoid issuer/recipient confusion
+        qa_intent = detect_document_qa_intent(message)
+        refined_message = rewrite_document_question(message, qa_intent)
+        file_name = extract_filename_from_message(message)
+        payload = {
+            'body': json.dumps({
+                'message': refined_message,
+                'userId': user_id,
+                'sessionId': session_id,
+                'routedFrom': 'agent-router-python',
+                'agentType': 'document-agent',
+                **({'qaIntent': qa_intent} if qa_intent else {}),
+                **({'fileName': file_name} if file_name else {})
+            })
+        }
+
+        response = lambda_client.invoke(
+            FunctionName=DOCUMENT_AGENT_FUNCTION,
+            Payload=json.dumps(payload).encode('utf-8')
+        )
+
+        raw = response.get('Payload').read().decode('utf-8') if response.get('Payload') else '{}'
+        result = {}
+        try:
+            result = json.loads(raw)
+        except Exception:
+            result = {}
+
+        body_obj = {}
+        if isinstance(result, dict) and 'body' in result:
+            try:
+                body_obj = json.loads(result['body'])
+            except Exception:
+                body_obj = result
+        else:
+            body_obj = result
+
+        # Normalize minimal shape for compatibility
+        response_text = body_obj.get('response') or 'Here are your documents.'
+
+        # If we asked for recipient and answer appears to be an organization, refine once
+        if qa_intent == 'recipient' and looks_like_org(response_text):
+            strong_preamble = (
+                "PERSON-ONLY CONSTRAINT: Return the participant/person name only (no organizations). "
+                "If no person name is present, answer 'Unknown'. Include a very short evidence snippet."
+            )
+            refined_message_2 = f"{refined_message}\n\n{strong_preamble}"
+            payload2 = {
+                'body': json.dumps({
+                    'message': refined_message_2,
+                    'userId': user_id,
+                    'sessionId': session_id,
+                    'routedFrom': 'agent-router-python',
+                    'agentType': 'document-agent',
+                    **({'qaIntent': qa_intent} if qa_intent else {}),
+                    **({'fileName': file_name} if file_name else {}),
+                    'refinement': 'recipientPersonOnly'
+                })
+            }
+            try:
+                response2 = lambda_client.invoke(
+                    FunctionName=DOCUMENT_AGENT_FUNCTION,
+                    Payload=json.dumps(payload2).encode('utf-8')
+                )
+                raw2 = response2.get('Payload').read().decode('utf-8') if response2.get('Payload') else '{}'
+                result2 = {}
+                try:
+                    result2 = json.loads(raw2)
+                except Exception:
+                    result2 = {}
+                body_obj2 = {}
+                if isinstance(result2, dict) and 'body' in result2:
+                    try:
+                        body_obj2 = json.loads(result2['body'])
+                    except Exception:
+                        body_obj2 = result2
+                else:
+                    body_obj2 = result2
+                alt_response_text = body_obj2.get('response') or ''
+                if alt_response_text:
+                    response_text = alt_response_text
+                    # merge any additional fields from second body
+                    for k, v in body_obj2.items():
+                        if k not in body_obj:
+                            body_obj[k] = v
+            except Exception as _:
+                logger.warning("Refinement re-ask failed; returning initial response")
+
+        # Persist conversation (user + assistant) for continuity
+        try:
+            save_conversation_message(session_id, user_id, 'user', message)
+            save_conversation_message(session_id, user_id, 'assistant', response_text, 'document-agent')
+        except Exception as _:
+            logger.warning("Failed to persist conversation for document-agent path")
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
+                'response': response_text,
+                'agent': 'document-agent',
+                'sessionId': session_id,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'document-agent-lambda',
+                'agentcore_available': False,
+                # pass-through structured data when available
+                **{k: v for k, v in body_obj.items() if k not in ['response']}
+            })
+        }
+    except Exception as e:
+        logger.error(f"Error invoking Document Agent Lambda: {e}")
+        # Fallback: simple message
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
+                'response': 'I had trouble accessing the document service. Please try again shortly.',
+                'agent': 'document-agent',
+                'sessionId': session_id,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'fallback',
+                'agentcore_available': False
+            })
+        }
+
+
+def invoke_knowledge_agent_lambda(message: str, user_id: str, session_id: str) -> Dict[str, Any]:
+    """Call the Knowledge Agent Lambda for region-aware compliance guidance."""
+    try:
+        ml = (message or '').lower()
+        classification_intent = any(k in ml for k in [
+            'classify', 'classification', 'categorize', 'categories', 'organize', 'group', 'structure', 'taxonomy'
+        ])
+        payload = {
+            'body': json.dumps({
+                'message': message,
+                'userId': user_id,
+                'sessionId': session_id,
+                'routedFrom': 'agent-router-python',
+                'agentType': 'knowledge-agent',
+                # Hint to Knowledge Agent to return category grouping when user asks to classify
+                **({'action': 'classify'} if classification_intent else {})
+            })
+        }
+
+        response = lambda_client.invoke(
+            FunctionName=os.environ.get('KNOWLEDGE_AGENT_FUNCTION', 'enabl-knowledge-agent-dev'),
+            Payload=json.dumps(payload).encode('utf-8')
+        )
+
+        raw = response.get('Payload').read().decode('utf-8') if response.get('Payload') else '{}'
+        result = {}
+        try:
+            result = json.loads(raw)
+        except Exception:
+            result = {}
+
+        body_obj = {}
+        if isinstance(result, dict) and 'body' in result:
+            try:
+                body_obj = json.loads(result['body'])
+            except Exception:
+                body_obj = result
+        else:
+            body_obj = result
+
+        response_text = body_obj.get('response') or 'Here is the regional guidance.'
+
+        # Persist conversation (user + assistant) for continuity
+        try:
+            save_conversation_message(session_id, user_id, 'user', message)
+            save_conversation_message(session_id, user_id, 'assistant', response_text, 'knowledge-agent')
+        except Exception as _:
+            logger.warning("Failed to persist conversation for knowledge-agent path")
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
+                'response': response_text,
+                'agent': 'knowledge-agent',
+                'sessionId': session_id,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'knowledge-agent-lambda',
+                **{k: v for k, v in body_obj.items() if k not in ['response']}
+            })
+        }
+    except Exception as e:
+        logger.error(f"Error invoking Knowledge Agent Lambda: {e}")
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
+                'response': 'I had trouble accessing the knowledge service. Please try again shortly.',
+                'agent': 'knowledge-agent',
+                'sessionId': session_id,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'fallback'
+            })
+        }
 
 
 def get_conversation_history(session_id: str, user_id: str, max_messages: int = 10) -> List[Dict[str, Any]]:
@@ -306,6 +631,14 @@ def select_agent(message: str, session_id: str, user_id: str, explicit_agent: Op
         The selected agent type
     """
     if explicit_agent and explicit_agent in AGENT_RUNTIME_ARNS:
+        # If caller explicitly set document-agent but the message clearly matches
+        # knowledge/compliance intent, prefer knowledge-agent.
+        if explicit_agent == 'document-agent':
+            ml = (message or '').lower()
+            knowledge_score = sum(1 for kw in AGENT_KEYWORDS.get('knowledge-agent', []) if kw in ml)
+            document_score = sum(1 for kw in AGENT_KEYWORDS.get('document-agent', []) if kw in ml)
+            if knowledge_score > document_score:
+                return 'knowledge-agent'
         return explicit_agent
 
     # Get conversation history to determine context
@@ -519,6 +852,9 @@ def invoke_foundation_model_direct(agent_type: str, prompt: str, session_id: str
         logger.error(f"Amazon Nova Pro error: {e}")
         return "I apologize, but I'm unable to process your request at the moment. Please try again later."
 
+    # Safety net: ensure a string is always returned
+    return ""
+
 
 def invoke_foundation_model(agent_type: str, message: str, session_id: str, user_id: str = 'anonymous') -> str:
     """
@@ -643,7 +979,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"Routing to agent: {selected_agent} for user: {user_id}")
         
-        # Use hybrid approach: AgentCore with Foundation Model fallback
+        # If it's a document listing or explicit document-agent, invoke Lambda directly for data-backed answers
+        if selected_agent == 'document-agent' or is_document_listing_intent(message):
+            return invoke_document_agent_lambda(message, user_id, session_id)
+
+        # Knowledge/compliance guidance via Knowledge Agent
+        if selected_agent == 'knowledge-agent':
+            return invoke_knowledge_agent_lambda(message, user_id, session_id)
+
+        # Use hybrid approach: AgentCore with Foundation Model fallback for other agents
         response_text = invoke_agent(selected_agent, message, session_id, user_id)
         
         # Determine the source based on what was actually used
@@ -853,5 +1197,89 @@ def get_conversation_handler(event: Dict[str, Any], context: Any) -> Dict[str, A
             },
             'body': json.dumps({
                 'error': 'Failed to retrieve conversation'
+            })
+        }
+
+
+def delete_conversation_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Delete all conversation messages for a session for a given user
+    """
+    try:
+        # Extract session ID from path parameters
+        path_params = event.get('pathParameters') or {}
+        session_id = path_params.get('sessionId')
+
+        # Extract user ID from query parameters for security
+        query_params = event.get('queryStringParameters') or {}
+        user_id = query_params.get('userId')
+
+        if not session_id:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                },
+                'body': json.dumps({
+                    'error': 'Session ID is required'
+                })
+            }
+
+        if not user_id or user_id == 'anonymous':
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                },
+                'body': json.dumps({
+                    'error': 'User ID is required for conversation deletion'
+                })
+            }
+
+        table = dynamodb.Table(CONVERSATION_TABLE)
+        # Query all items in the session that belong to the user
+        resp = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('session_id').eq(session_id),
+            FilterExpression=boto3.dynamodb.conditions.Attr('user_id').eq(user_id)
+        )
+        items = resp.get('Items', [])
+
+        # Batch delete (simple loop; small volumes expected per session)
+        deleted = 0
+        for it in items:
+            table.delete_item(
+                Key={
+                    'session_id': it['session_id'],
+                    'message_id': it['message_id']
+                }
+            )
+            deleted += 1
+
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
+                'status': 'deleted',
+                'session_id': session_id,
+                'deleted_count': deleted
+            })
+        }
+
+    except Exception as e:
+        logger.error(f"Delete Conversation Error: {e}")
+
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
+                'error': 'Failed to delete conversation'
             })
         }

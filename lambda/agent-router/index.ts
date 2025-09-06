@@ -7,6 +7,7 @@
  */
 
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 
 // Agent Runtime ARNs for Bedrock AgentCore
 const AGENT_RUNTIME_ARNS = {
@@ -100,6 +101,7 @@ function selectAgent(message: string, explicitAgent?: string): string {
  */
 export const handler = async (event: any): Promise<any> => {
   const agentCoreClient = new BedrockAgentCoreClient({ region: 'us-east-1' });
+  const lambdaClient = new LambdaClient({ region: 'us-east-1' });
   
   try {
     const request: AgentRequest = JSON.parse(event.body || '{}');
@@ -118,19 +120,78 @@ export const handler = async (event: any): Promise<any> => {
       };
     }
 
-    // Select appropriate agent
-    const selectedAgent = selectAgent(message, agentType);
+  // Select appropriate agent
+  const selectedAgent = selectAgent(message, agentType);
     const agentRuntimeArn = AGENT_RUNTIME_ARNS[selectedAgent as keyof typeof AGENT_RUNTIME_ARNS];
 
     console.log(`Routing to agent: ${selectedAgent} for user: ${userId}`);
     console.log(`Agent Runtime ARN: ${agentRuntimeArn}`);
     console.log(`Message: ${message}`);
 
-    // Prepare payload as per AgentCore documentation
+    // Session
     const inputText: string = message;
     const runtimeSessionId = sessionId || `session-${Date.now()}`;
 
-    // Invoke the AgentCore runtime using the command pattern
+    // Fast-path: for document-agent, invoke our Lambda (data-backed) instead of AgentCore
+    if (selectedAgent === 'document-agent') {
+      const functionName = process.env.DOCUMENT_AGENT_FUNCTION;
+      if (!functionName) {
+        console.warn('DOCUMENT_AGENT_FUNCTION env var not set; falling back to AgentCore runtime for document-agent');
+      } else {
+        try {
+          const lambdaPayload = {
+            body: JSON.stringify({
+              message: inputText,
+              userId,
+              sessionId: runtimeSessionId,
+              routedFrom: 'agent-router',
+              agentType: 'document-agent'
+            })
+          };
+
+          const invoke = await lambdaClient.send(new InvokeCommand({
+            FunctionName: functionName,
+            Payload: Buffer.from(JSON.stringify(lambdaPayload))
+          }));
+
+          const raw = invoke.Payload ? new TextDecoder().decode(invoke.Payload) : '{}';
+          let parsed: any = {};
+          try { parsed = JSON.parse(raw); } catch {}
+
+          let bodyObj: any = {};
+          if (parsed && parsed.body) {
+            try { bodyObj = JSON.parse(parsed.body); } catch { bodyObj = parsed; }
+          } else {
+            bodyObj = parsed;
+          }
+
+          const responseText = bodyObj.response || 'Here are your documents.';
+
+          const result = {
+            response: responseText,
+            agent: 'document-agent',
+            sessionId: runtimeSessionId,
+            timestamp: new Date().toISOString(),
+            agentcore_available: false,
+            ...bodyObj
+          };
+
+          return {
+            statusCode: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+            body: JSON.stringify(result)
+          };
+        } catch (lambdaErr) {
+          console.error('Error invoking document-agent Lambda from Agent Router:', lambdaErr);
+          // Continue to AgentCore as a last resort
+        }
+      }
+    }
+
+  // Invoke the AgentCore runtime using the command pattern
     const command = new InvokeAgentRuntimeCommand({
       agentRuntimeArn: agentRuntimeArn,
       // No qualifier - use the agent runtime directly

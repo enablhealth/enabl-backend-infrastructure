@@ -39,6 +39,7 @@ This folder contains medical documents and resources that will be uploaded to AW
 - Prescription formats
 - Appointment scheduling forms
 - Insurance claim templates
+- Compliance templates
 
 ## File Formats Supported
 - **PDF**: Primary format for documents

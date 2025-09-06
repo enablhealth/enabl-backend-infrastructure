@@ -17,7 +17,9 @@ export class EnablAgentRouterStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps & { environment: string }) {
     super(scope, id, props);
 
-    const environment = props?.environment || 'development';
+  const environment = props?.environment || 'development';
+  const envMap: Record<string, string> = { development: 'dev', staging: 'staging', production: 'prod' };
+  const envName = envMap[environment] || environment;
 
     // DynamoDB table for conversation memory
     this.conversationTable = new dynamodb.Table(this, 'ConversationTable', {
@@ -83,6 +85,20 @@ export class EnablAgentRouterStack extends cdk.Stack {
               ],
               resources: [this.conversationTable.tableArn]
             })
+            ,
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ['lambda:InvokeFunction'],
+              resources: [
+                // Environment-specific Document Agent function
+                `arn:aws:lambda:us-east-1:*:function:enabl-document-agent-${envName}`,
+                // Fallback wildcard to support versions/aliases or alternate names in non-prod
+                'arn:aws:lambda:us-east-1:*:function:enabl-document-agent-*',
+                // Knowledge agent invocations
+                `arn:aws:lambda:us-east-1:*:function:enabl-knowledge-agent-${envName}`,
+                'arn:aws:lambda:us-east-1:*:function:enabl-knowledge-agent-*'
+              ]
+            })
           ]
         })
       }
@@ -102,7 +118,9 @@ export class EnablAgentRouterStack extends cdk.Stack {
         REGION: 'us-east-1',
         PYTHONPATH: '/var/runtime:/var/task',
         CONVERSATION_TABLE: this.conversationTable.tableName,
-        ENVIRONMENT: environment
+  ENVIRONMENT: environment,
+  DOCUMENT_AGENT_FUNCTION: `enabl-document-agent-${envName}`,
+  KNOWLEDGE_AGENT_FUNCTION: `enabl-knowledge-agent-${envName}`
       },
       description: 'Enabl Health AI Agent Router - Routes requests to specialized Bedrock agents (Python)'
     });
@@ -118,9 +136,9 @@ export class EnablAgentRouterStack extends cdk.Stack {
       }
     });
 
-    // Lambda integration
+    // Lambda proxy integrations (lets Lambda control statusCode/headers incl. CORS)
     const agentIntegration = new apigateway.LambdaIntegration(this.agentRouterFunction, {
-      requestTemplates: { 'application/json': '{ "statusCode": "200" }' }
+      proxy: true,
     });
 
     // API Routes
@@ -144,7 +162,8 @@ export class EnablAgentRouterStack extends cdk.Stack {
       description: 'Get available Enabl Health AI agents (Python)'
     });
     
-    agents.addMethod('GET', new apigateway.LambdaIntegration(getAgentsFunction));
+  const getAgentsIntegration = new apigateway.LambdaIntegration(getAgentsFunction, { proxy: true });
+  agents.addMethod('GET', getAgentsIntegration);
 
     // Recent chats endpoints
     const chats = this.apiGateway.root.addResource('chats');
@@ -168,7 +187,8 @@ export class EnablAgentRouterStack extends cdk.Stack {
     // Grant DynamoDB permissions to recent chats function
     this.conversationTable.grantReadData(getRecentChatsFunction);
     
-    recentChats.addMethod('GET', new apigateway.LambdaIntegration(getRecentChatsFunction));
+  const getRecentChatsIntegration = new apigateway.LambdaIntegration(getRecentChatsFunction, { proxy: true });
+  recentChats.addMethod('GET', getRecentChatsIntegration);
 
     // GET /chats/{sessionId}?userId=xxx - Get full conversation
     const sessionResource = chats.addResource('{sessionId}');
@@ -189,7 +209,27 @@ export class EnablAgentRouterStack extends cdk.Stack {
     // Grant DynamoDB permissions to conversation function
     this.conversationTable.grantReadData(getConversationFunction);
     
-    sessionResource.addMethod('GET', new apigateway.LambdaIntegration(getConversationFunction));
+  const getConversationIntegration = new apigateway.LambdaIntegration(getConversationFunction, { proxy: true });
+  sessionResource.addMethod('GET', getConversationIntegration);
+
+    // DELETE /chats/{sessionId}?userId=xxx - Delete conversation for a session
+    const deleteConversationFunction = new lambda.Function(this, 'DeleteConversationFunction', {
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'agent_router.delete_conversation_handler',
+      code: lambda.Code.fromAsset('lambda/agent-router', {
+        exclude: ['*.ts', '*.js', 'node_modules', 'dist', 'tsconfig.json', 'package*.json']
+      }),
+      timeout: cdk.Duration.seconds(15),
+      environment: {
+        CONVERSATION_TABLE: this.conversationTable.tableName,
+        ENVIRONMENT: environment
+      },
+      description: 'Delete conversation for a session (Python)'
+    });
+    // Grant DynamoDB permissions to delete conversation function
+    this.conversationTable.grantReadWriteData(deleteConversationFunction);
+    const deleteConversationIntegration = new apigateway.LambdaIntegration(deleteConversationFunction, { proxy: true });
+    sessionResource.addMethod('DELETE', deleteConversationIntegration);
 
     // Health check endpoint
     const health = this.apiGateway.root.addResource('health');
@@ -207,7 +247,26 @@ export class EnablAgentRouterStack extends cdk.Stack {
       description: 'Health check for Enabl Agent Router (Python)'
     });
     
-    health.addMethod('GET', new apigateway.LambdaIntegration(healthCheckFunction));
+    const healthIntegration = new apigateway.LambdaIntegration(healthCheckFunction, { proxy: true });
+    health.addMethod('GET', healthIntegration);
+
+    // Ensure CORS headers are included on default 4XX/5XX responses as well
+    this.apiGateway.addGatewayResponse('Default4XXWithCors', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': "'*'",
+        'Access-Control-Allow-Headers': "'*'",
+        'Access-Control-Allow-Methods': "'*'",
+      },
+    });
+    this.apiGateway.addGatewayResponse('Default5XXWithCors', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': "'*'",
+        'Access-Control-Allow-Headers': "'*'",
+        'Access-Control-Allow-Methods': "'*'",
+      },
+    });
 
     // Outputs
     new cdk.CfnOutput(this, 'AgentRouterApiUrl', {

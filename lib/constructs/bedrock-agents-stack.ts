@@ -13,6 +13,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as opensearch from 'aws-cdk-lib/aws-opensearchserverless';
 import { Construct } from 'constructs';
@@ -126,10 +127,12 @@ export class BedrockAgentsStack extends cdk.Stack {
       memorySize: 1024,
       environment: {
         KNOWLEDGE_BASE_ID: 'kb-user-documents',
-        MODEL_ID: 'cohere.command-text-v14',
+        MODEL_ID: 'amazon.nova-pro-v1:0', // Upgraded for ChatGPT-level analysis
         REGION: this.region,
         ENVIRONMENT: props.environment,
         DOCUMENTS_BUCKET: this.knowledgeBaseBucket.bucketName,
+        DOCUMENTS_TABLE: `enabl-documents-${props.environment}`, // MISSING - Critical for document retrieval
+        USER_UPLOADS_BUCKET: `enabl-user-uploads-${props.environment}`, // MISSING - For user uploaded files
       },
     });
 
@@ -191,6 +194,44 @@ export class BedrockAgentsStack extends cdk.Stack {
 
     // Grant S3 permissions to document agent
     this.knowledgeBaseBucket.grantReadWrite(documentAgentFunction);
+    // Also grant access to the user uploads bucket (by name, existing bucket)
+    const userUploadsBucket = s3.Bucket.fromBucketName(this, 'UserUploadsBucket', `enabl-user-uploads-${props.environment}`);
+    userUploadsBucket.grantRead(documentAgentFunction);
+
+    // Document Ingestion Lambda (S3 -> DynamoDB metadata upsert)
+    const documentIngestFunction = new lambda.Function(this, 'DocumentIngestFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lib/lambda/document-ingest'),
+      timeout: cdk.Duration.minutes(1),
+      memorySize: 256,
+      environment: {
+        DOCUMENTS_TABLE: `enabl-documents-${props.environment}`,
+      },
+    });
+
+    // Allow ingest lambda to read S3 object heads and write to DynamoDB
+    userUploadsBucket.grantRead(documentIngestFunction);
+    const documentsTableArnForIngest = `arn:aws:dynamodb:${this.region}:${this.account}:table/enabl-documents-${props.environment}`;
+    documentIngestFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
+      resources: [documentsTableArnForIngest],
+    }));
+
+    // S3 event notification: trigger on new uploads
+    userUploadsBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(documentIngestFunction)
+    );
+
+    // Grant DynamoDB read/query permissions for the documents table
+    const documentsTableArn = `arn:aws:dynamodb:${this.region}:${this.account}:table/enabl-documents-${props.environment}`;
+    documentAgentFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:Scan'],
+      resources: [documentsTableArn, `${documentsTableArn}/index/*`],
+    }));
 
     // Grant additional permissions for appointment agent
     const appointmentAgentPolicy = new iam.PolicyStatement({
@@ -263,6 +304,13 @@ export class BedrockAgentsStack extends cdk.Stack {
     const documentsResource = agentsResource.addResource('documents');
     
     documentsResource.addMethod('POST', new apigateway.LambdaIntegration(documentAgentFunction), {
+      authorizer: cognitoAuthorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Document ingest (HTTP) - optional client-side trigger after upload
+    const ingestResource = documentsResource.addResource('ingest');
+    ingestResource.addMethod('POST', new apigateway.LambdaIntegration(documentIngestFunction), {
       authorizer: cognitoAuthorizer,
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });

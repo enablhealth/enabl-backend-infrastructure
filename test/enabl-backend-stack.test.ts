@@ -86,9 +86,16 @@ describe('EnablBackendStack', () => {
   test('Creates API Gateway', () => {
     const { template } = createTestStack('APIGateway');
     
+    // Main API
     template.hasResourceProperties('AWS::ApiGateway::RestApi', {
       Name: 'enabl-api-dev',
-      Description: 'Enabl Health API - Development Environment',
+      Description: 'Enabl Health Development API',
+    });
+
+    // AI Agents API
+    template.hasResourceProperties('AWS::ApiGateway::RestApi', {
+      Name: 'enabl-ai-api-development',
+      Description: 'Enabl Health AI Agents API',
     });
   });
 
@@ -98,17 +105,17 @@ describe('EnablBackendStack', () => {
     // Verify we have the expected number of key resources
     const resources = template.toJSON().Resources;
     
-    // Count DynamoDB tables (should have 5)
+  // Count DynamoDB tables (should have 7: users, chats, documents, appointments, integrations, reminders, userPreferences)
     const dynamoTables = Object.keys(resources).filter(key => 
       resources[key].Type === 'AWS::DynamoDB::Table'
     );
-    expect(dynamoTables.length).toBe(5);
+  expect(dynamoTables.length).toBe(7);
     
-    // Count S3 buckets (should have 3)
+  // Count S3 buckets (should have 4: documents, knowledgeBase, userUploads, backups)
     const s3Buckets = Object.keys(resources).filter(key => 
       resources[key].Type === 'AWS::S3::Bucket'
     );
-    expect(s3Buckets.length).toBe(3);
+  expect(s3Buckets.length).toBe(4);
     
     // Should have 1 User Pool
     const userPools = Object.keys(resources).filter(key => 
@@ -116,10 +123,10 @@ describe('EnablBackendStack', () => {
     );
     expect(userPools.length).toBe(1);
     
-    // Should have 1 API Gateway
+  // Should have 2 API Gateways (Main + AI Agents)
     const apiGateways = Object.keys(resources).filter(key => 
       resources[key].Type === 'AWS::ApiGateway::RestApi'
     );
-    expect(apiGateways.length).toBe(1);
+  expect(apiGateways.length).toBe(2);
   });
 });

@@ -3,7 +3,7 @@ import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { EnablBackendStack } from '../lib/enabl-backend-stack';
 import { EnablAgentRouterStack } from '../lib/agent-router-stack';
-import { KnowledgeBaseStack } from '../lib/knowledge-base-s3-stack';
+import { KnowledgeBaseStack } from '../lib/knowledge-base-stack';
 import { EnablConfig, getConfig } from '../lib/config';
 
 /**

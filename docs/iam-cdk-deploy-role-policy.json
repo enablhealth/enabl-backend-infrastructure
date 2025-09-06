@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Sid": "CloudFormation","Effect": "Allow","Action": ["cloudformation:CreateStack","cloudformation:UpdateStack","cloudformation:DeleteStack","cloudformation:DescribeStacks","cloudformation:DescribeStackEvents","cloudformation:GetTemplate","cloudformation:ValidateTemplate","cloudformation:ListStacks"],"Resource": "*"},
+    {"Sid": "CDKBootstrapResources","Effect": "Allow","Action": ["s3:PutObject","s3:GetObject","s3:DeleteObject","s3:ListBucket","s3:GetBucketLocation"],"Resource": ["arn:aws:s3:::cdk-*","arn:aws:s3:::cdk-*/*"]},
+    {"Sid": "IAMPassLimited","Effect": "Allow","Action": ["iam:PassRole","iam:GetRole","iam:CreateRole","iam:AttachRolePolicy","iam:DetachRolePolicy","iam:DeleteRole","iam:PutRolePolicy","iam:DeleteRolePolicy"],"Resource": "arn:aws:iam::*:role/Enabl*"},
+    {"Sid": "Lambda","Effect": "Allow","Action": ["lambda:CreateFunction","lambda:UpdateFunctionConfiguration","lambda:UpdateFunctionCode","lambda:DeleteFunction","lambda:PublishVersion","lambda:CreateAlias","lambda:UpdateAlias","lambda:DeleteAlias","lambda:GetFunction","lambda:ListFunctions"],"Resource": "arn:aws:lambda:*:*:function:Enabl*"},
+    {"Sid": "DynamoDB","Effect": "Allow","Action": ["dynamodb:CreateTable","dynamodb:UpdateTable","dynamodb:DeleteTable","dynamodb:DescribeTable","dynamodb:ListTables","dynamodb:TagResource","dynamodb:UntagResource"],"Resource": ["arn:aws:dynamodb:*:*:table/Enabl*","arn:aws:dynamodb:*:*:table/enabl-*"]},
+    {"Sid": "Logs","Effect": "Allow","Action": ["logs:CreateLogGroup","logs:DescribeLogGroups","logs:CreateLogStream","logs:PutLogEvents","logs:DeleteLogGroup"],"Resource": "arn:aws:logs:*:*:*"},
+    {"Sid": "S3BucketsApp","Effect": "Allow","Action": ["s3:CreateBucket","s3:DeleteBucket","s3:PutEncryptionConfiguration","s3:PutBucketPolicy","s3:PutBucketTagging","s3:GetBucketPolicy","s3:PutLifecycleConfiguration"],"Resource": ["arn:aws:s3:::enabl-*"]},
+    {"Sid": "APIGateway","Effect": "Allow","Action": ["apigateway:POST","apigateway:PUT","apigateway:GET","apigateway:PATCH","apigateway:DELETE"],"Resource": "arn:aws:apigateway:*::/restapis*"},
+    {"Sid": "BedrockInvoke","Effect": "Allow","Action": ["bedrock:InvokeModel","bedrock:ListFoundationModels"],"Resource": "*"},
+    {"Sid": "Describe","Effect": "Allow","Action": ["ec2:Describe*","iam:List*","iam:Get*"],"Resource": "*"}
+  ]
+}
